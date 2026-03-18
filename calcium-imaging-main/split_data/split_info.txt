@@ -1,0 +1,8 @@
+test_size: 0.2
+val_size: 0.2
+random_state: 42
+remove_label_2: True
+total_samples: 9444
+train_samples: 5666
+val_samples: 1889
+test_samples: 1889
