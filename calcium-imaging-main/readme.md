@@ -62,7 +62,58 @@ class Config:
 > [!IMPORTANT]
 > 这是项目最主要的用户交互脚本，通过修改其配置，可以控制整个训练实验。
 
+## 快速使用指南
 
+### 复现或继续模型训练
+**确保数据就绪：** 确认 split_data/目录下已存在 .npy文件。
+
+**配置实验：** 用文本编辑器打开 train_multitask_model.py，根据你的目标修改 Config类（例如，只训练CNN和LSTM：MODEL_TYPES = ["CNN", "LSTM"]）。
+
+**启动训练：** 
+```bash
+cd calcium-imaging-main
+python train_multitask_model.py
+```
+**查看结果：** 训练完成后，在 trained_models/目录中查看相应模型的结果。
+
+### 使用预训练模型进行预测
+```python
+import torch
+import numpy as np
+
+# 1. 加载数据
+X_sample = np.load('split_data/X_test.npy')[:5]  # 取5个测试样本
+
+# 2. 加载预训练模型 (以Action_choice任务的CNN模型为例)
+model_path = 'trained_models/Action_choice/CNN/best_model.pth'
+# 注意：根据训练环境，可能需要指定map_location
+model = torch.load(model_path, map_location=torch.device('cpu'))
+model.eval()  # 设置为评估模式
+
+# 3. 进行预测
+with torch.no_grad():
+    outputs = model(torch.from_numpy(X_sample).float())
+    # 模型输出为列表，对应多个任务。对于单任务模式，取第一个输出。
+    predictions = torch.argmax(outputs[0], dim=1).numpy()
+    print("预测结果:", predictions)
+```
+
+### 从零开始预处理数据
+如果需要从原始的 .mat文件重新开始：
+```bash
+# 1. 提取并标准化原始数据 (通常只需一次)
+python mat_dataset_processor.py
+# 2. 进行预处理并划分最终数据集
+python data_preprocessing.py
+# 3. 开始训练模型
+python train_multitask_model.py
+```
+
+> [!WARNING]
+> **运行路径：** 请在 calcium-imaging-main/目录下执行所有Python命令；
+> **计算资源：** CNN与LSTM模型训练较耗时，建议在GPU环境下运行，SVM等传统模型在CPU上即可快速运行；
+> **依赖环境：** 运行前请确保已安装所有必需的Python包（torch, numpy, scikit-learn, matplotlib, scipy, pandas等）；
+> **配置修改：** 主要的实验定制均通过修改 train_multitask_model.py中的 Config类完成，无需改动其他脚本。
 
 
 
