@@ -111,8 +111,11 @@ python train_multitask_model.py
 
 > [!WARNING]
 > **运行路径：** 请在 calcium-imaging-main/目录下执行所有Python命令；
+> 
 > **计算资源：** CNN与LSTM模型训练较耗时，建议在GPU环境下运行，SVM等传统模型在CPU上即可快速运行；
+> 
 > **依赖环境：** 运行前请确保已安装所有必需的Python包（torch, numpy, scikit-learn, matplotlib, scipy, pandas等）；
+> 
 > **配置修改：** 主要的实验定制均通过修改 train_multitask_model.py中的 Config类完成，无需改动其他脚本。
 
 
