@@ -30,8 +30,8 @@ class MATDatasetProcessor:
     
     主要功能：
     1. 加载原始MAT格式的fMRI数据
-    2. 提取行为标签（Trial_Type, Action_choice, Outcome等）
-    3. 将数据转换为统一的四维格式 (trials × ROIs × timepoints × labels)
+    2. 提取行为标签（Frequency, Action, Reward等）
+    3. 将数据转换为统一的四维格式 (trials × Cells × frames × labels)
     4. 保存处理后的数据和标签到文件
     """
     
@@ -44,11 +44,7 @@ class MATDatasetProcessor:
             output_folder: 输出文件夹路径，如果不指定则自动创建
         """
         self.input_folder = Path(input_folder)
-        
-        if output_folder is None:
-            self.output_folder = Path(".") / self.input_folder.name / "processed_mat_files"
-        else:
-            self.output_folder = Path(output_folder)
+        self.output_folder = Path(output_folder)
             
         self.output_folder.mkdir(parents=True, exist_ok=True)
         
@@ -139,21 +135,23 @@ class MATDatasetProcessor:
                 behav_group = f['behavResults']
                 labels: Dict[str, np.ndarray] = {}
                 required_vars = ['Stim_toneFreq', 'Trial_Type', 'Action_choice', 'Time_reward']
+                rename_required_vars = ['Stim_toneFreq', 'Frequency', 'Action', 'Time_reward']
                 
-                for var_name in required_vars:
+                for rename_var_name,var_name in zip(rename_required_vars, required_vars):
                     if var_name in behav_group:
-                        data = behav_group[var_name][()]
+                        data = np.transpose(behav_group[var_name][()], (1, 0))
                         if data.ndim == 2:
                             if data.shape[0] == 1:
                                 data = data.flatten()
                             elif data.shape[1] == 1:
                                 data = data.flatten()
-                        labels[var_name] = data
+                        labels[rename_var_name] = data
+                        
                     else:
                         print(f"  警告: {file_name} 中缺少标签 '{var_name}'，用0填充")
-                        labels[var_name] = np.zeros(data_aligned_matlab.shape[0])
+                        labels[rename_var_name] = np.zeros(data_aligned_matlab.shape[0])
                 
-                action_choice = labels['Action_choice']
+                action_choice = labels['Action']
                 time_reward = labels['Time_reward']
                 outcome = np.zeros(len(action_choice), dtype=np.int32)
                 
@@ -165,40 +163,37 @@ class MATDatasetProcessor:
                     elif action_choice[i] != 2 and time_reward[i] == 0:
                         outcome[i] = 0
                 
-                labels['Outcome'] = outcome
+                labels['Reward'] = outcome
                 
                 n_trials_matlab = data_aligned_matlab.shape[0]
                 label_length = len(labels['Stim_toneFreq'])
                 actual_trials = min(label_length, n_trials_matlab)
                 
-                metadata: Dict[str, Any] = {}
-                for var_name in ['ROIIndex', 'frame_rate', 'start_frame']:
-                    if var_name in f:
-                        metadata[var_name] = f[var_name][()]
+                labels['start_frame'] = f['start_frame'][()]
+                labels['frame_rate'] = f['frame_rate'][()]
+                
                 
                 data_dict: Dict[str, Any] = {
                     'data_aligned': data_aligned_matlab,
                     'labels': labels,
-                    'metadata': metadata,
                     'actual_trials': actual_trials,
-                    'n_rois': data_aligned_matlab.shape[1],
-                    'n_timepoints': data_aligned_matlab.shape[2]
+                    'n_cells': data_aligned_matlab.shape[1],
+                    'n_frames': data_aligned_matlab.shape[2]
                 }
                 
                 metadata_dict: Dict[str, Any] = {
                     'file_name': file_name,
                     'session_number': self.extract_session_number(file_name),
                     'n_trials': actual_trials,
-                    'n_rois': data_aligned_matlab.shape[1],
-                    'n_timepoints': data_aligned_matlab.shape[2],
+                    'n_cells': data_aligned_matlab.shape[1],
+                    'n_frames': data_aligned_matlab.shape[2],
                     'original_shape': data_aligned.shape,
                     'transposed_shape': data_aligned_matlab.shape
                 }
                 
                 print(f"  成功加载: {file_name}")
-                print(f"    可用trials: {actual_trials}, ROIs: {data_aligned_matlab.shape[1]}, "
-                      f"timepoints: {data_aligned_matlab.shape[2]}")
-                
+                print(f"    可用trials: {actual_trials}, Cells: {data_aligned_matlab.shape[1]}, "
+                      f"frames: {data_aligned_matlab.shape[2]}")
                 return data_dict, metadata_dict
                 
         except OSError as e:
@@ -210,28 +205,26 @@ class MATDatasetProcessor:
             self.stats['failed_files'] += 1
             return None
     
-    def create_four_dim_data(self, data_dict: Dict[str, Any]) -> np.ndarray:
-        """创建四维数据数组"""
+    def create_Frequency_Action_Reward(self, data_dict: Dict[str, Any]) -> np.ndarray:
+        """创建数据数组"""
         data_aligned = data_dict['data_aligned']
         labels = data_dict['labels']
         actual_trials = data_dict['actual_trials']
         
-        n_rois = data_aligned.shape[1]
-        n_timepoints = data_aligned.shape[2]
-        four_dim_data = np.zeros((actual_trials, n_rois, n_timepoints, 4), dtype=np.float32)
+        n_cells = data_aligned.shape[1]
+        n_frames = data_aligned.shape[2]
+        Frequency_Action_Reward = np.zeros((actual_trials,  3), dtype=np.float32)
         
-        stim_tone_freq = labels['Stim_toneFreq']
-        trial_type = labels['Trial_Type']
-        action_choice = labels['Action_choice']
-        outcome = labels['Outcome']
+        trial_type = labels['Frequency']
+        action_choice = labels['Action']
+        outcome = labels['Reward']
         
         for i in range(actual_trials):
-            four_dim_data[i, :, :, 0] = stim_tone_freq[i] if i < len(stim_tone_freq) else 0
-            four_dim_data[i, :, :, 1] = trial_type[i] if i < len(trial_type) else 0
-            four_dim_data[i, :, :, 2] = action_choice[i] if i < len(action_choice) else 0
-            four_dim_data[i, :, :, 3] = outcome[i] if i < len(outcome) else 0
+            Frequency_Action_Reward[i,  0] = trial_type[i] if i < len(trial_type) else 0
+            Frequency_Action_Reward[i,  1] = action_choice[i] if i < len(action_choice) else 0
+            Frequency_Action_Reward[i,  2] = outcome[i] if i < len(outcome) else 0
         
-        return four_dim_data
+        return Frequency_Action_Reward
     
     def create_label_dataframe(self, data_dict: Dict[str, Any], metadata: Dict[str, Any]) -> pd.DataFrame:
         """创建标签DataFrame"""
@@ -246,8 +239,7 @@ class MATDatasetProcessor:
             'Session_ID': metadata['session_number']
         }
         
-        label_keys = ['Stim_toneFreq', 'Trial_Type', 'Action_choice', 'Outcome']
-        
+        label_keys = ['Stim_toneFreq', 'Frequency', 'Action', 'Reward']
         for label_name in label_keys:
             if label_name in labels:
                 label_values = labels[label_name]
@@ -257,10 +249,9 @@ class MATDatasetProcessor:
                     padded = np.zeros(actual_trials)
                     padded[:len(label_values)] = label_values
                     df_data[label_name] = padded
-        
         return pd.DataFrame(df_data)
     
-    def process_single_file(self, file_path: Path, save_four_dim: bool = True) -> Optional[Dict[str, Any]]:
+    def process_single_file(self, file_path: Path, save_label: bool = True) -> Optional[Dict[str, Any]]:
         """处理单个MAT文件"""
         file_name = file_path.name
         
@@ -275,34 +266,36 @@ class MATDatasetProcessor:
         
         data_dict, metadata = loaded_data
         df = self.create_label_dataframe(data_dict, metadata)
-        four_dim_data = self.create_four_dim_data(data_dict)
+        Frequency_Action_Reward = self.create_Frequency_Action_Reward(data_dict)
         
         result_dict = None
-        if save_four_dim:
+        if save_label:
             processed_file_name = f"processed_{file_name}"
             processed_mat_path = self.output_folder / processed_file_name
             
             save_dict = {
-                'data_aligned': data_dict['data_aligned'][:data_dict['actual_trials'], :, :],
-                'four_dim_labels': four_dim_data,
-                'original_file': file_name,
-                'metadata': data_dict['metadata']
+                'Frequency_Action_Reward': data_dict['data_aligned'][:data_dict['actual_trials'], :, :],
+                'Labels': Frequency_Action_Reward,
+                'Original_file': file_name,
+                'Start_frame':data_dict['labels']['start_frame'][:data_dict['actual_trials']],
+                'Frame_rate':data_dict['labels']['frame_rate'][:data_dict['actual_trials']],
+                'Stim_toneFreq':data_dict['labels']['Stim_toneFreq'][:data_dict['actual_trials']]
             }
             
-            for key in ['Stim_toneFreq', 'Trial_Type', 'Action_choice', 'Outcome']:
-                if key in data_dict['labels']:
-                    values = data_dict['labels'][key]
-                    if len(values) > data_dict['actual_trials']:
-                        save_dict[key] = values[:data_dict['actual_trials']]
-                    else:
-                        save_dict[key] = values
+            # for key in ['Stim_toneFreq', 'Frequency', 'Action', 'Reward']:
+            #     if key in data_dict['labels']:
+            #         values = data_dict['labels'][key]
+            #         if len(values) > data_dict['actual_trials']:
+            #             save_dict[key] = values[:data_dict['actual_trials']]
+            #         else:
+            #             save_dict[key] = values
             
             try:
                 sio.savemat(processed_mat_path, save_dict, do_compression=True, long_field_names=True)
-                print(f"    四维数据已保存: {processed_file_name}")
+                print(f"    数据已保存: {processed_file_name}")
             except Exception as e:
-                print(f"    保存四维数据失败: {str(e)}")
-                save_four_dim = False
+                print(f"    保存数据失败: {str(e)}")
+                save_label = False
         
         self.stats['successful_files'] += 1
         
@@ -310,10 +303,10 @@ class MATDatasetProcessor:
             'file_name': file_name,
             'session_number': metadata['session_number'],
             'dataframe': df,
-            'four_dim_data': four_dim_data if save_four_dim else None,
+            'Frequency_Action_Reward': Frequency_Action_Reward if save_label else None,
             'metadata': metadata,
             'data_dict': data_dict,
-            'four_dim_saved': save_four_dim
+            'label_saved': save_label
         }
         
         return result_dict
@@ -348,7 +341,7 @@ class MATDatasetProcessor:
                         file_name = mat_file.name
                         print(f"\n[{i+1}/{len(mat_files)}] 处理文件: {file_name}")
                         
-                        result = self.process_single_file(mat_file, save_four_dim=False)
+                        result = self.process_single_file(mat_file, save_label=False)
                         
                         if result is not None:
                             df = result['dataframe']
@@ -377,15 +370,15 @@ class MATDatasetProcessor:
                                 'Session_ID': metadata.get('session_number', 0),
                                 'File_Name': metadata.get('file_name', 'Unknown'),
                                 'Trials': metadata.get('n_trials', 0),
-                                'ROIs': metadata.get('n_rois', 0),
-                                'Timepoints': metadata.get('n_timepoints', 0)
+                                'Cells': metadata.get('n_cells', 0),
+                                'Frames': metadata.get('n_frames', 0)
                             })
                         
                         summary_df = pd.DataFrame(summary_data)
                         summary_df.to_excel(excel_writer, sheet_name='File_Summary', index=False)
                         
                         label_stats = []
-                        for label_col in ['Stim_toneFreq', 'Trial_Type', 'Action_choice', 'Outcome']:
+                        for label_col in ['Stim_toneFreq', 'Frequency', 'Action', 'Reward']:
                             if label_col in combined_df.columns:
                                 unique_vals = combined_df[label_col].unique()
                                 label_stats.append({
@@ -413,7 +406,7 @@ class MATDatasetProcessor:
                 file_name = mat_file.name
                 print(f"\n[{i+1}/{len(mat_files)}] 处理文件: {file_name}")
                 
-                result = self.process_single_file(mat_file, save_four_dim=False)
+                result = self.process_single_file(mat_file, save_label=False)
                 
                 if result is not None:
                     df = result['dataframe']
@@ -433,25 +426,25 @@ class MATDatasetProcessor:
         print(f"跳过文件: {self.stats['skipped_files']}")
         
         if all_dataframes:
+            
             combined_df = pd.concat(all_dataframes, ignore_index=True)
             print(f"总Trials数: {len(combined_df)}")
             print(f"总Sessions数: {combined_df['Session_ID'].nunique()}")
             
-            if 'Outcome' in combined_df.columns:
-                outcome_counts = combined_df['Outcome'].value_counts().sort_index()
-                print("\nOutcome分布:")
+            if 'Reward' in combined_df.columns:
+                outcome_counts = combined_df['Reward'].value_counts().sort_index()
+                print("Reward:")
                 for outcome, count in outcome_counts.items():
                     percentage = count / len(combined_df) * 100
-                    print(f"  Outcome {outcome}: {count} trials ({percentage:.1f}%)")
+                    print(f"  Reward {outcome}: {count} trials ({percentage:.1f}%)")
             
             return combined_df
-        
         return pd.DataFrame()
     
-    def generate_four_dim_files(self):
-        """为所有原始MAT文件生成四维数据文件"""
+    def generate_label_files(self):
+        """为所有原始MAT文件生成数据文件"""
         print("\n" + "=" * 60)
-        print("步骤2: 为所有原始MAT文件生成四维数据")
+        print("步骤2: 为所有原始MAT文件生成数据")
         print("=" * 60)
         
         mat_files = self.find_original_mat_files()
@@ -460,7 +453,7 @@ class MATDatasetProcessor:
             print("没有找到可处理的原始MAT文件")
             return
         
-        print(f"准备为 {len(mat_files)} 个文件生成四维数据...")
+        print(f"准备为 {len(mat_files)} 个文件生成数据...")
         
         processed_count = 0
         
@@ -473,12 +466,12 @@ class MATDatasetProcessor:
             
             print(f"\n处理文件: {file_name}")
             
-            result = self.process_single_file(mat_file, save_four_dim=True)
+            result = self.process_single_file(mat_file, save_label=True)
             
-            if result is not None and result['four_dim_saved']:
+            if result is not None and result['label_saved']:
                 processed_count += 1
         
-        print("\n四维数据生成完成!")
+        print("\n数据生成完成!")
         print(f"输出文件夹: {self.output_folder.absolute()}")
         print(f"成功生成: {processed_count} 个文件")
     
@@ -526,7 +519,7 @@ class MATDatasetProcessor:
 
 
 def process_dataset(input_folder: str, output_excel: str = None, 
-                    no_excel: bool = False, no_four_dim: bool = False,
+                    no_excel: bool = False, no_label: bool = False,
                     clean_only: bool = False, output_folder: str = None):
     """处理单个数据集的函数"""
     print(f"\n{'='*80}")
@@ -559,10 +552,10 @@ def process_dataset(input_folder: str, output_excel: str = None,
                 output_excel_path=output_excel
             )
         
-        # 3. 生成四维数据文件（除非指定不生成）
-        if not no_four_dim:
-            print("\n3. 生成四维数据文件...")
-            processor.generate_four_dim_files()
+        # 3. 生成数据文件（除非指定不生成）
+        if not no_label:
+            print("\n3. 生成数据文件...")
+            processor.generate_label_files()
         
         # 4. 打印处理摘要
         processor.print_summary()
@@ -722,7 +715,7 @@ def read_excel_files_and_calculate_stats(excel_files):
                 avg_trials = total_trials / unique_sessions if unique_sessions > 0 else 0
                 
                 # 计算目标列的统计信息
-                target_columns = ['Trial_Type', 'Action_choice', 'Outcome']
+                target_columns = ['Frequency', 'Action', 'Reward']
                 columns_stats = {}
                 
                 for col in target_columns:
@@ -740,25 +733,25 @@ def read_excel_files_and_calculate_stats(excel_files):
                             'value_counts_avg': value_counts_avg,
                         }
                 
-                # 计算ROIs和Timepoints的统计
-                rois_total = pd.to_numeric(summary_df['ROIs'], errors='coerce').sum()
-                timepoints_total = pd.to_numeric(summary_df['Timepoints'], errors='coerce').sum()
+                # 计算Cells和Frames的统计
+                cells_total = pd.to_numeric(summary_df['Cells'], errors='coerce').sum()
+                frames_total = pd.to_numeric(summary_df['Frames'], errors='coerce').sum()
                 
-                rois_total = int(rois_total)
-                timepoints_total = int(timepoints_total)
+                cells_total = int(cells_total)
+                frames_total = int(frames_total)
                 
-                avg_rois = float(rois_total / unique_sessions) if unique_sessions > 0 else 0.0
-                avg_timepoints = float(timepoints_total / unique_sessions) if unique_sessions > 0 else 0.0
+                avg_cells = float(cells_total / unique_sessions) if unique_sessions > 0 else 0.0
+                avg_frames = float(frames_total / unique_sessions) if unique_sessions > 0 else 0.0
                 
                 datasets[dataset_name] = {
                     'sessions': int(unique_sessions),
                     'avg_trials': float(avg_trials),
                     'total_trials': int(total_trials),
                     'columns_stats': columns_stats,
-                    'rois_total': rois_total,
-                    'avg_rois': avg_rois,
-                    'timepoints_total': timepoints_total,
-                    'avg_timepoints': avg_timepoints,
+                    'cells_total': cells_total,
+                    'avg_cells': avg_cells,
+                    'frames_total': frames_total,
+                    'avg_frames': avg_frames,
                 }
                 
                 print(f"  Session数量: {unique_sessions}")
@@ -792,12 +785,23 @@ def plot_all_metrics_grouped(datasets):
     # 提取数据集名称
     dataset_names = list(datasets.keys())
     
+    # 提取数据集名称
+    dataset_names = list(datasets.keys())
+    
+    # 定义所有要绘制的指标（按组排列）
+    metric_groups = [
+        'Basic Statistics',
+        'Frequency',
+        'Action', 
+        'Reward'
+    ]
+    
     # 将指标分组
     metric_groups = {
-        'Basic Statistics': ['sessions', 'avg_trials', 'avg_rois', 'avg_timepoints'],
-        'Trial Type': ['Trial_Type_0', 'Trial_Type_1'],
-        'Action Choice': ['Action_choice_0', 'Action_choice_1', 'Action_choice_2'],
-        'Outcome': ['Outcome_0', 'Outcome_1', 'Outcome_2']
+        'Basic Statistics': ['sessions', 'avg_trials', 'avg_cells', 'avg_frames'],
+        'Frequency': ['Frequency_0', 'Frequency_1'],
+        'Action': ['Action_0', 'Action_1', 'Action_2'],
+        'Reward': ['Reward_0', 'Reward_1', 'Reward_2']
     }
     
     # 准备数据
@@ -805,7 +809,7 @@ def plot_all_metrics_grouped(datasets):
     for metric in [item for sublist in metric_groups.values() for item in sublist]:
         values = []
         for dataset in dataset_names:
-            if metric in ['sessions', 'avg_trials', 'avg_rois', 'avg_timepoints']:
+            if metric in ['sessions', 'avg_trials', 'avg_cells', 'avg_frames']:
                 values.append(datasets[dataset][metric])
             else:
                 metric_type = metric.rsplit('_', 1)[0]
@@ -821,9 +825,9 @@ def plot_all_metrics_grouped(datasets):
     
     group_colors = {
         'Basic Statistics': ['#1f77b4', '#d62728', '#ff7f0e', '#9467bd'],
-        'Trial Type': ['#8c564b', '#c49c94'],
-        'Action Choice': ['#1b9e77', '#66c2a4', '#b2e2e2'],
-        'Outcome': ['#e7298a', '#c994c7', '#df65b0']
+        'Frequency': ['#8c564b', '#c49c94'],
+        'Action': ['#1b9e77', '#66c2a4', '#b2e2e2'],
+        'Reward': ['#e7298a', '#c994c7', '#df65b0']
     }
     
     # 计算起始位置
@@ -875,16 +879,16 @@ def plot_all_metrics_grouped(datasets):
     legend_mapping = {
         'sessions': 'Sessions',
         'avg_trials': 'Trials',
-        'avg_rois': 'ROIs',
-        'avg_timepoints': 'Timepoints',
-        'Trial_Type_0': 'Low',
-        'Trial_Type_1': 'High',
-        'Action_choice_0': 'Left',
-        'Action_choice_1': 'Right',
-        'Action_choice_2': 'No_Action',
-        'Outcome_0': 'Error',
-        'Outcome_1': 'Correct',
-        'Outcome_2': 'Miss'
+        'avg_cells': 'Cells',
+        'avg_frames': 'Frames',
+        'Frequency_0': 'Low',
+        'Frequency_1': 'High',
+        'Action_0': 'Left',
+        'Action_1': 'Right',
+        'Action_2': 'No_Action',
+        'Reward_0': 'Error',
+        'Reward_1': 'Correct',
+        'Reward_2': 'Miss'
     }
     
     for group_name, metrics in metric_groups.items():
@@ -932,33 +936,33 @@ def plot_transposed_metrics(datasets):
     # 定义所有要绘制的指标（按组排列）
     metric_groups = [
         'Basic Statistics',
-        'Trial_Type',
-        'Action_choice', 
-        'Outcome'
+        'Frequency',
+        'Action', 
+        'Reward'
     ]
     
     # 每个组内的具体指标
     metrics_by_group = {
-        'Basic Statistics': ['sessions', 'avg_trials', 'avg_rois', 'avg_timepoints'],
-        'Trial_Type': ['Trial_Type_0', 'Trial_Type_1'],
-        'Action_choice': ['Action_choice_0', 'Action_choice_1', 'Action_choice_2'],
-        'Outcome': ['Outcome_0', 'Outcome_1', 'Outcome_2']
+        'Basic Statistics': ['sessions', 'avg_trials', 'avg_cells', 'avg_frames'],
+        'Frequency': ['Frequency_0', 'Frequency_1'],
+        'Action': ['Action_0', 'Action_1', 'Action_2'],
+        'Reward': ['Reward_0', 'Reward_1', 'Reward_2']
     }
     
     # 指标标签（用于显示）
     metric_labels = {
         'sessions': 'Sessions',
         'avg_trials': 'Trials',
-        'avg_rois': 'ROIs',
-        'avg_timepoints': 'Timepoints',
-        'Trial_Type_0': 'Low',
-        'Trial_Type_1': 'High',
-        'Action_choice_0': 'Left',
-        'Action_choice_1': 'Right',
-        'Action_choice_2': 'No_Action',
-        'Outcome_0': 'Error',
-        'Outcome_1': 'Correct',
-        'Outcome_2': 'Miss'
+        'avg_cells': 'Cells',
+        'avg_frames': 'Frames',
+        'Frequency_0': 'Low',
+        'Frequency_1': 'High',
+        'Action_0': 'Left',
+        'Action_1': 'Right',
+        'Action_2': 'No_Action',
+        'Reward_0': 'Error',
+        'Reward_1': 'Correct',
+        'Reward_2': 'Miss'
     }
     
     # 构建所有指标列表（按组顺序）
@@ -968,27 +972,27 @@ def plot_transposed_metrics(datasets):
     
     # 颜色方案 - 为每个数据集分配颜色
     dataset_colors = {
-        '7_28Sess': '#FF6B6B',
-        '4_16Sess': '#4ECDC4',
-        '21Sessions_Data': '#45B7D1'
+        '7_28kHz_Data': '#FF6B6B',
+        '4_16kHz_Data': '#4ECDC4',
+        '8_32kHz_Data': '#45B7D1'
     }
     
     # 辅助函数：获取指标值
     def get_metric_value(dataset_name, metric):
         dataset = datasets[dataset_name]
         
-        if metric in ['sessions', 'avg_trials', 'avg_rois', 'avg_timepoints']:
+        if metric in ['sessions', 'avg_trials', 'avg_cells', 'avg_frames']:
             return dataset[metric]
         
-        if metric.startswith('Trial_Type_'):
+        if metric.startswith('Frequency_'):
             value = int(metric.split('_')[-1])
-            return dataset['columns_stats']['Trial_Type']['value_counts_avg'][value]
-        elif metric.startswith('Action_choice_'):
+            return dataset['columns_stats']['Frequency']['value_counts_avg'][value]
+        elif metric.startswith('Action_'):
             value = int(metric.split('_')[-1])
-            return dataset['columns_stats']['Action_choice']['value_counts_avg'][value]
-        elif metric.startswith('Outcome_'):
+            return dataset['columns_stats']['Action']['value_counts_avg'][value]
+        elif metric.startswith('Reward_'):
             value = int(metric.split('_')[-1])
-            return dataset['columns_stats']['Outcome']['value_counts_avg'][value]
+            return dataset['columns_stats']['Reward']['value_counts_avg'][value]
         
         return 0
     
@@ -1040,7 +1044,7 @@ def plot_transposed_metrics(datasets):
     metric_regroups = [
         'Basic Statistics',
         'Frequency',
-        'Action_choice', 
+        'Action', 
         'Reward'
     ]
     for i, group in enumerate(metric_groups):
@@ -1087,11 +1091,11 @@ def main() -> None:
   # 指定输出Excel文件
   python3 mat_dataset_processor.py -i ./Data/21Sessions_Data -o ./results/labels.xlsx
   
-  # 只生成四维数据，不生成Excel
+  # 只生成数据，不生成Excel
   python3 mat_dataset_processor.py -i ./Data/21Sessions_Data --no-excel
   
-  # 只生成Excel，不生成四维数据
-  python3 mat_dataset_processor.py -i ./Data/21Sessions_Data --no-four-dim
+  # 只生成Excel，不生成数据
+  python3 mat_dataset_processor.py -i ./Data/21Sessions_Data --no_label
   
   # 清理已处理的文件
   python3 mat_dataset_processor.py -i ./Data/21Sessions_Data --clean-only
@@ -1122,9 +1126,9 @@ def main() -> None:
     )
     
     parser.add_argument(
-        '--no-four-dim',
+        '--no_label',
         action='store_true',
-        help='不生成四维数据文件'
+        help='不生成数据文件'
     )
     
     parser.add_argument(
@@ -1137,7 +1141,7 @@ def main() -> None:
         '--output-folder',
         type=str,
         default=None,
-        help='四维数据输出文件夹（默认：输入文件夹/processed_mat_files）'
+        help='数据输出文件夹（默认：输入文件夹/processed_mat_files）'
     )
     
     args = parser.parse_args()
@@ -1149,10 +1153,17 @@ def main() -> None:
         "../Data/Dataset for Figures 5 and 8F/7_28Sess"
     ]
     
+            
+    DEFAULT_OUTPUT_FOLDERS = [
+        "./8_32kHz_Data/processed_mat_files",
+        "./4_16kHz_Data/processed_mat_files",
+        "./7_28kHz_Data/processed_mat_files"
+    ]
+    
     DEFAULT_OUTPUT_EXCELS = [
-        "./21Sessions_Data/all_sessions_labels.xlsx",
-        "./4_16Sess/all_sessions_labels.xlsx",
-        "./7_28Sess/all_sessions_labels.xlsx"
+        "./8_32kHz_Data/all_sessions_labels.xlsx",
+        "./4_16kHz_Data/all_sessions_labels.xlsx",
+        "./7_28kHz_Data/all_sessions_labels.xlsx"
     ]
     
     # 检查输入路径是否存在
@@ -1168,6 +1179,7 @@ def main() -> None:
         print("=" * 80)
         print("未指定输入文件夹，使用默认的三个数据集路径")
         print("=" * 80)
+
         
         # 检查所有默认路径是否存在
         valid_datasets = []
@@ -1176,7 +1188,7 @@ def main() -> None:
                 valid_datasets.append({
                     'input': input_folder,
                     'output_excel': DEFAULT_OUTPUT_EXCELS[i] if i < len(DEFAULT_OUTPUT_EXCELS) else None,
-                    'output_folder': args.output_folder
+                    'output_folder': DEFAULT_OUTPUT_FOLDERS[i] 
                 })
         
         if not valid_datasets:
@@ -1200,7 +1212,7 @@ def main() -> None:
                     input_folder=dataset['input'],
                     output_excel=dataset['output_excel'],
                     no_excel=args.no_excel,
-                    no_four_dim=args.no_four_dim,
+                    no_label=args.no_label,
                     clean_only=args.clean_only,
                     output_folder=dataset['output_folder']
                 )
@@ -1257,7 +1269,7 @@ def main() -> None:
             input_folder=args.input,
             output_excel=args.output_excel,
             no_excel=args.no_excel,
-            no_four_dim=args.no_four_dim,
+            no_label=args.no_label,
             clean_only=args.clean_only,
             output_folder=args.output_folder
         )
