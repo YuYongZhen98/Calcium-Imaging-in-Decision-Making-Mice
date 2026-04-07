@@ -63,7 +63,7 @@ class CellProcessedThreeTaskProcessor:
         self.target_frame_rate = target_frame_rate  # 目标帧率
         
         # 数据存储
-        self.X_features = []  # 三维特征列表 (trials, cells, timepoints)
+        self.X_features = []  # 三维特征列表 (trials, cells, frames)
         self.y_labels = []    # 三维标签列表 (trials, 3_labels)
         self.file_info = []   # 文件信息
         
@@ -90,7 +90,7 @@ class CellProcessedThreeTaskProcessor:
         根据帧率截取时间序列数据
         
         Args:
-            features: 时间序列数据，形状为 (trials, cells, timepoints)
+            features: 时间序列数据，形状为 (trials, cells, frames)
             frame_rate: 帧率 (Hz)
             
         Returns:
@@ -100,7 +100,7 @@ class CellProcessedThreeTaskProcessor:
             raise ValueError("特征数据为空")
         
         original_shape = features.shape
-        n_timepoints = original_shape[-1]
+        n_frames = original_shape[-1]
         
         # 根据帧率计算截取参数
         start_frame = int(self.start_second * frame_rate)
@@ -108,9 +108,9 @@ class CellProcessedThreeTaskProcessor:
         end_frame = start_frame + duration_frames
         
         # 检查数据是否足够长
-        if n_timepoints < end_frame:
-            print(f"警告: 数据长度不足，期望{end_frame}帧，实际{n_timepoints}帧")
-            end_frame = n_timepoints
+        if n_frames < end_frame:
+            print(f"警告: 数据长度不足，期望{end_frame}帧，实际{n_frames}帧")
+            end_frame = n_frames
             duration_frames = end_frame - start_frame
             
             if duration_frames <= 0:
@@ -119,7 +119,7 @@ class CellProcessedThreeTaskProcessor:
         # 截取时间序列
         truncated_data = features[..., start_frame:end_frame]
         
-        print(f"时间序列截取: {n_timepoints} -> {duration_frames} 帧")
+        print(f"时间序列截取: {n_frames} -> {duration_frames} 帧")
         
         return truncated_data
     
@@ -128,11 +128,11 @@ class CellProcessedThreeTaskProcessor:
         将数据插值到目标帧率
         
         Args:
-            features: 特征数据，形状为 (trials, cells, timepoints)
+            features: 特征数据，形状为 (trials, cells, frames)
             original_frame_rate: 原始帧率
             
         Returns:
-            插值后的特征数据，形状为 (trials, cells, target_timepoints)
+            插值后的特征数据，形状为 (trials, cells, target_frames)
         """
         if features is None or features.size == 0:
             raise ValueError("特征数据为空")
@@ -141,19 +141,19 @@ class CellProcessedThreeTaskProcessor:
             print(f"帧率相同({original_frame_rate}Hz)，无需插值")
             return features
         
-        n_trials, n_cells, n_timepoints = features.shape
+        n_trials, n_cells, n_frames = features.shape
         
         # 计算目标时间点数
-        target_timepoints = int(self.duration_seconds * self.target_frame_rate)
+        target_frames = int(self.duration_seconds * self.target_frame_rate)
         
         # 创建原始时间轴和目标时间轴
-        original_time = np.linspace(0, self.duration_seconds, n_timepoints)
-        target_time = np.linspace(0, self.duration_seconds, target_timepoints)
+        original_time = np.linspace(0, self.duration_seconds, n_frames)
+        target_time = np.linspace(0, self.duration_seconds, target_frames)
         
         # 初始化插值后的数据
-        interpolated_features = np.zeros((n_trials, n_cells, target_timepoints))
+        interpolated_features = np.zeros((n_trials, n_cells, target_frames))
         
-        print(f"插值处理: {original_frame_rate}Hz -> {self.target_frame_rate}Hz, {n_timepoints} -> {target_timepoints} 时间点")
+        print(f"插值处理: {original_frame_rate}Hz -> {self.target_frame_rate}Hz, {n_frames} -> {target_frames} 时间点")
         
         # 对每个trial和每个Cell进行插值
         for trial in range(n_trials):
@@ -181,7 +181,7 @@ class CellProcessedThreeTaskProcessor:
         处理Cell维度
         
         Args:
-            features: 特征数据，形状为 (trials, cells, timepoints)
+            features: 特征数据，形状为 (trials, cells, frames)
             method: 处理方法 ('random_cut' 随机截取)
             
         Returns:
@@ -193,7 +193,7 @@ class CellProcessedThreeTaskProcessor:
         if method is None:
             method = self.cell_process_method
             
-        n_trials, n_cells, n_timepoints = features.shape
+        n_trials, n_cells, n_frames = features.shape
         
         if method == 'random_cut':
             # 随机截取：支持多种选择策略
@@ -378,10 +378,10 @@ class CellProcessedThreeTaskProcessor:
                     
                     # 1. 提取特征（三维数据）
                     features = None
-                    if 'data_aligned' in mat_data:
-                        features = mat_data['data_aligned']  # (trials, cells, timepoints)
+                    if 'Frequency_Action_Reward' in mat_data:
+                        features = mat_data['Frequency_Action_Reward']  # (trials, cells, frames)
                     else:
-                        print(f"跳过文件 {file_name}: 未找到data_aligned字段")
+                        print(f"跳过文件 {file_name}: 未找到Frequency_Action_Reward字段")
                         continue
                     
                     # 检查特征维度
@@ -406,38 +406,15 @@ class CellProcessedThreeTaskProcessor:
                     # 3. 将数据插值到目标帧率
                     features_interpolated = self.interpolate_to_target_frame_rate(features_cropped, frame_rate)  
                     
-                    # 4. 提取两个标签
-                    labels_dict = {}
-                    label_names = ['Trial_Type', 'Action_choice']                   
-                    for label_name in label_names:
-                        if label_name in mat_data:
-                            label_data = mat_data[label_name]
-                            # 确保是一维数组
-                            if label_data.ndim == 2:
-                                if label_data.shape[0] == 1:
-                                    label_data = label_data.flatten()
-                                elif label_data.shape[1] == 1:
-                                    label_data = label_data.flatten()
-                            labels_dict[label_name] = label_data
-                        else:
-                            labels_dict[label_name] = np.zeros(features.shape[0])
-                    
-                    # 确保所有标签长度一致
-                    n_trials = features_interpolated.shape[0]
-                    for label_name, label_data in labels_dict.items():
-                        if len(label_data) > n_trials:
-                            labels_dict[label_name] = label_data[:n_trials]
-                        elif len(label_data) < n_trials:
-                            # 填充零
-                            padded = np.zeros(n_trials)
-                            padded[:len(label_data)] = label_data
-                            labels_dict[label_name] = padded
-                    
-                    # 5. 创建标签矩阵 (trials, 2)
-                    labels_matrix = np.column_stack([
-                        labels_dict['Trial_Type'],
-                        labels_dict['Action_choice']
-                    ])                  
+                    # 4. 提取标签
+                    if 'Labels' in mat_data:
+                        label_data = mat_data['Labels']  # (trials, labels)
+                    else:
+                        print(f"跳过文件 {file_name}: 未找到Labels字段")
+                        continue    
+                                      
+                    # 5. 创建标签矩阵 (trials, 2),获取Frequency数据（第一列）和Action数据（第二列）
+                    labels_matrix = label_data[:, :2]  # 获取前两列        
                     
                     # 6. 过滤标签值为2的样本
                     if remove_label_2:
@@ -460,10 +437,10 @@ class CellProcessedThreeTaskProcessor:
                         'dataset_name': folder.name,
                         'original_frame_rate': frame_rate,
                         'target_frame_rate': self.target_frame_rate,
-                        'n_trials': n_trials,
+                        'n_trials': features_interpolated.shape[0],
                         'n_cells': features_interpolated.shape[1],
-                        'n_timepoints': features_interpolated.shape[2],
-                        'original_timepoints': features.shape[2],
+                        'n_frames': features_interpolated.shape[2],
+                        'original_frames': features.shape[2],
                         'feature_shape': features_interpolated.shape,
                         'label_shape': labels_matrix.shape,
                         'interpolated': frame_rate != self.target_frame_rate
@@ -566,9 +543,9 @@ class CellProcessedThreeTaskProcessor:
         
         n_before = features.shape[0]
         
-        # 创建掩码：保留Action_choice != 2 且 Trial_Type != 2 的样本
-        mask_action = labels_matrix[:, 1] != 2  # Action_choice != 2
-        mask_trial = labels_matrix[:, 0] != 2   # Trial_Type != 2
+        # 创建掩码：保留Action != 2 且 Frequency != 2 的样本
+        mask_action = labels_matrix[:, 1] != 2  # Action != 2
+        mask_trial = labels_matrix[:, 0] != 2   # Frequency != 2
         
         # 综合掩码：保留所有标签都不为2的样本
         mask = mask_action  & mask_trial
@@ -595,25 +572,7 @@ class CellProcessedThreeTaskProcessor:
         # 合并所有数据
         X_unified = np.concatenate(self.X_features, axis=0)
         y_unified = np.concatenate(self.y_labels, axis=0)
-        
-        # 如果需要，过滤标签值为2的样本
-        if remove_label_2:
-            # 创建掩码：保留所有标签都不为2的样本
-            mask = np.ones(len(y_unified), dtype=bool)
-            for i in range(y_unified.shape[1]):
-                mask = mask & (y_unified[:, i] != 2)
-            
-            n_before = len(X_unified)
-            X_unified = X_unified[mask]
-            y_unified = y_unified[mask]
-            n_after = len(X_unified)
-            
-            print(f"全局过滤标签2: 从{n_before}个样本减少到{n_after}个样本")
-            
-            if n_after == 0:
-                print("错误: 过滤后没有有效样本")
-                return None, None
-        
+         
         # 存储统一后的数据（不进行归一化）
         self.X_unified = X_unified
         self.y_unified = y_unified
@@ -685,7 +644,7 @@ class CellProcessedThreeTaskProcessor:
             'y_val': y_val,
             'y_test': y_test,
             'feature_shape': X_train.shape[1:],
-            'label_names': ['Trial_Type', 'Action_choice'],
+            'label_names': ['Frequency', 'Action'],
             'split_info': {
                 'test_size': test_size,
                 'val_size': val_size,
@@ -701,22 +660,26 @@ class CellProcessedThreeTaskProcessor:
         return dataset_dict
     
     def _select_stratify_column(self, y):
-        """选择用于分层抽样的列"""
-        label_names = ['Trial_Type', 'Action_choice']
+        """选择用于分层抽样的列
+        返回列索引，而不是列名
+        """
         max_classes = 0
         selected_col = None
         
-        for i, name in enumerate(label_names):
-            if i < y.shape[1]:
-                unique_classes = np.unique(y[:, i])
-                n_classes = len(unique_classes)
-                
-                if n_classes > 1 and n_classes > max_classes:
-                    max_classes = n_classes
-                    selected_col = i
+        # 遍历所有列
+        for i in range(y.shape[1]):
+            unique_classes = np.unique(y[:, i])
+            n_classes = len(unique_classes)
+            
+            if n_classes > 1 and n_classes > max_classes:
+                max_classes = n_classes
+                selected_col = i
         
         if selected_col is not None:
-            print(f"使用 {label_names[selected_col]} 进行分层抽样")
+            # 可选：打印列的含义（如果需要知道是哪一列）
+            col_meanings = {0: "Frequency", 1: "Action"}
+            col_name = col_meanings.get(selected_col, f"列{selected_col}")
+            print(f"使用第{selected_col}列({col_name})进行分层抽样，有{max_classes}个类别")
             return selected_col
         else:
             print("警告: 无法找到合适的分层列，使用随机抽样")

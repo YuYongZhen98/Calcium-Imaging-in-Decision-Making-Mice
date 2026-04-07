@@ -90,15 +90,15 @@ class Config:
     
     # 任务配置 - 支持多任务和单任务
     TASK_MODES = {
-        'multi_task': ['Trial_Type', 'Action_choice'],  # 多任务模式
-        'Trial_Type': ['Trial_Type'],       # 单任务模式 - Trial_Type
-        'Action_choice': ['Action_choice']  # 单任务模式 - Action_choice
+        'multi_task': ['Frequency', 'Action'],  # 多任务模式
+        'Frequency': ['Frequency'],       # 单任务模式 - Frequency
+        'Action': ['Action']  # 单任务模式 - Action
     }
     
     # 选择训练模式（可以同时选择多个）
-    # TRAIN_MODES = ['Trial_Type']
-    TRAIN_MODES = ['Trial_Type', 'Action_choice']
-    # TRAIN_MODES = ['multi_task', 'Trial_Type', 'Action_choice']
+    # TRAIN_MODES = ['Frequency']
+    TRAIN_MODES = ['Frequency', 'Action']
+    # TRAIN_MODES = ['multi_task', 'Frequency', 'Action']
     
     # 输出配置
     OUTPUT_CONFIG = {
@@ -271,24 +271,24 @@ class DatasetManager:
             
             # 根据任务模式选择标签列
             if self.y_train is not None and self.y_train.shape[1] >= 2:
-                if self.current_task_mode == 'Trial_Type':
-                    # 只保留Trial_Type任务（第一列）
+                if self.current_task_mode == 'Frequency':
+                    # 只保留Frequency任务（第一列）
                     self.y_train = self.y_train[:, 0:1]
                     self.y_val = self.y_val[:, 0:1]
                     self.y_test = self.y_test[:, 0:1]
-                    print("单任务模式: 只保留Trial_Type任务")
-                elif self.current_task_mode == 'Action_choice':
-                    # 只保留Action_choice任务（第二列）
+                    print("单任务模式: Frequency")
+                elif self.current_task_mode == 'Action':
+                    # 只保留Action任务（第二列）
                     self.y_train = self.y_train[:, 1:2]
                     self.y_val = self.y_val[:, 1:2]
                     self.y_test = self.y_test[:, 1:2]
-                    print("单任务模式: 只保留Action_choice任务")
+                    print("单任务模式: 只保留Action任务")
                 else:
                     # 多任务模式：保留前两个任务
                     self.y_train = self.y_train[:, :2]
                     self.y_val = self.y_val[:, :2]
                     self.y_test = self.y_test[:, :2]
-                    print("多任务模式: 保留Trial_Type和Action_choice任务")
+                    print("多任务模式: 保留Frequency和Action任务")
             
             print("成功加载预先划分的数据集")
             print(f"  训练集: X={self.X_train.shape}, y={self.y_train.shape}")
@@ -305,8 +305,8 @@ class DatasetManager:
         
         # 保存预处理前的第一个样本用于对比
         sample_before = self.X_train[0].copy() if len(self.X_train) > 0 else None
-        print("预处理前第一个样本的值:")
-        print(sample_before)
+        # print("预处理前第一个样本的值:")
+        # print(sample_before)
         
         """预处理数据"""
         processor = DataProcessor(normalization_method, handle_missing)
@@ -322,8 +322,8 @@ class DatasetManager:
         # 打印预处理后的样本对比
         if sample_before is not None and len(self.X_train) > 0:
            sample_after = self.X_train[0]
-           print("\n预处理后第一个样本的值:")
-           print(sample_after)      
+           # print("\n预处理后第一个样本的值:")
+           # print(sample_after)      
         
         print("数据预处理完成")
         return True
@@ -361,9 +361,9 @@ class DatasetManager:
                 class_values.append(unique_vals)
                 
                 # 生成类别名称
-                if task_name == 'Trial_Type':
+                if task_name == 'Frequency':
                     names = [f'Type{int(val)}' for val in unique_vals]
-                elif task_name == 'Action_choice':
+                elif task_name == 'Action':
                     names = [f'Choice{int(val)}' for val in unique_vals]
                 else:
                     names = [f'Class{int(val)}' for val in unique_vals]
@@ -1170,10 +1170,10 @@ class KFoldTrainer:
             unique_classes = np.unique(np.concatenate([y_true_task, y_pred_task]))
             
             # 根据任务名称定义标签映射
-            if task_name == 'Trial_Type':
+            if task_name == 'Frequency':
                 # 映射: 0 -> low, 1 -> high
                 label_map = {0: 'low', 1: 'high'}
-            elif task_name == 'Action_choice':
+            elif task_name == 'Action':
                 # 映射: 0 -> left, 1 -> right
                 label_map = {0: 'left', 1: 'right'}
             else:
